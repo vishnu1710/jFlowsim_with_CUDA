@@ -1,0 +1,165 @@
+#include "LB.h"
+
+extern "C"
+__device__ void getBGKEquilibrium(double rho, double vx, double vy, double *dfeq, int nodeIndex)
+{
+		
+	dfeq[nodeIndex + 0] = (4.f/9.f) * rho * (1.0 - 1.5 * (vx * vx + vy * vy)); 
+        dfeq[nodeIndex + 1] = (1.f/9.f) * rho * (1.0 + 3.0 * vx + 4.5 * vx * vx - 1.5 * (vx * vx + vy * vy));
+        dfeq[nodeIndex + 2] = (1.f/9.f) * rho * (1.0 + 3.0 * vy + 4.5 * vy * vy - 1.5 * (vx * vx + vy * vy));
+        dfeq[nodeIndex + 3] = (1.f/9.f) * rho * (1.0 - 3.0 * vx + 4.5 * vx * vx - 1.5 * (vx * vx + vy * vy));
+        dfeq[nodeIndex + 4] = (1.f/9.f) * rho * (1.0 - 3.0 * vy + 4.5 * vy * vy - 1.5 * (vx * vx + vy * vy));
+        dfeq[nodeIndex + 5] = (1.f/36.f) * rho * (1.0 + 3.0 * (vx + vy) + 4.5 * (vx + vy) * (vx + vy) - 1.5 * (vx * vx + vy * vy));
+       	dfeq[nodeIndex + 6] = (1.f/36.f) * rho * (1.0 + 3.0 * (-vx + vy) + 4.5 * (-vx + vy) * (-vx + vy) - 1.5 * (vx * vx + vy * vy));
+        dfeq[nodeIndex + 7] = (1.f/36.f) * rho * (1.0 - 3.0 * (vx + vy) + 4.5 * (vx + vy) * (vx + vy) - 1.5 * (vx * vx + vy * vy));
+        dfeq[nodeIndex + 8] = (1.f/36.f) * rho * (1.0 - 3.0 * (-vx + vy) + 4.5 * (-vx + vy) * (-vx + vy) - 1.5 * (vx * vx + vy * vy));
+}
+
+
+extern "C"
+__device__ double getForcingForDirection(int dir, double fX1, double fX2, double res)
+{
+	switch(dir)
+	{
+		case 0:
+			res = 0;
+			return res;
+			
+		case 1:
+			res = ((1.f/3.f) * fX1);
+			return res;
+				
+		case 3:
+			res = (-1.f/3.f) * fX1;
+			return res;			
+			
+		case 2:
+			res = (1.f/3.f) * fX2;
+			return res;
+			
+		case 4:
+			res = (-1.f/3.f) * fX2;
+			return res;		
+			
+		case 5:
+			res = (1.f/12.f) * (fX1 + fX2);
+			return res;
+			
+		case 6:
+			res = (1.f/12.f) * (-fX1 + fX2);
+			return res;
+			
+		case 7:
+			res = (1.f/12.f) * (-fX1 - fX2);
+			return res;
+			
+		case 8:
+			res = (1.f/12.f) * (fX1 - fX2);
+			return res;
+			
+		default:
+			res = -999.9;
+			return res;
+			
+	}
+}
+
+extern "C"
+
+__global__ void LBkernel(int LX, int LY, double *df, double *dfeq, double *dftemp, int *dtype, double s_nu, double fX1, double fX2)
+{
+	int offset = 0, nodeIndex;
+
+	int invdir[9] = {0,3,4,1,2,7,8,5,6};
+	double rho, vx, vy, tmp;
+	double res;
+	double P, NE, V, kxxyy, UP, NP, RIGHT;
+	double R, E, W, S, N, Ne, Sw, Nw, Se;
+	
+   /*__shared__ float F_OUT_E[THREAD_NUM];
+   __shared__ float F_OUT_W[THREAD_NUM];
+   __shared__ float F_OUT_N[THREAD_NUM];
+   __shared__ float F_OUT_S[THREAD_NUM];
+   __shared__ float F_OUT_NE[THREAD_NUM];
+   __shared__ float F_OUT_NW[THREAD_NUM];
+   __shared__ float F_OUT_SW[THREAD_NUM];
+   __shared__ float F_OUT_SE[THREAD_NUM];*/
+
+	int tIdx = threadIdx.x;
+	int tIdy= threadIdx.y;
+	int tx = tIdx + blockIdx.x * blockDim.x;
+	int ty = tIdy + blockIdx.y * blockDim.y;
+
+	
+	offset = tx + ty * (gridDim.x * blockDim.x);
+	
+  if(offset < LX * LY && dtype[offset] == FLUID)
+    {
+	nodeIndex = offset * 9;
+		
+	rho = df[nodeIndex + 0] + df[nodeIndex + 1] + df[nodeIndex + 2] + df[nodeIndex + 3] + df[nodeIndex + 4] + df[nodeIndex + 5] + 				df[nodeIndex + 6] + df[nodeIndex +7] + df[nodeIndex + 8];
+	
+	vx = (df[nodeIndex + 1] - df[nodeIndex +3] + df[nodeIndex + 5] - df[nodeIndex + 7] + df[nodeIndex + 8] - df[nodeIndex + 6]) / rho;
+
+	vy =  (df[nodeIndex + 2] - df[nodeIndex +4] + df[nodeIndex + 5] - df[nodeIndex + 7] - df[nodeIndex + 8] + df[nodeIndex + 6]) / rho;
+
+	getBGKEquilibrium(rho, vx, vy, dfeq, nodeIndex);
+
+	for (int k=0; k<9; k++)
+		{
+			dftemp[nodeIndex + k] = df[nodeIndex + k] - (s_nu * (df[nodeIndex + k] - dfeq[nodeIndex + k]));
+		}
+	
+   }
+ 
+   else if(offset < LX * LY && dtype[offset] == SOLID)
+	{
+		nodeIndex = offset * 9;
+
+		for (int k=0; k<9; k++)
+		{
+
+			dftemp[nodeIndex + k] = df[nodeIndex + invdir[k]];	
+		}
+	}
+
+
+
+	//add forcing
+	
+	for (int k=0; k<9; k++)
+		{
+			//getForcingForDirection(dir, fX1, fX2, res);
+			dftemp[nodeIndex + k] += getForcingForDirection(k, fX1, fX2, res);;	
+		}
+
+
+
+	//Propagate
+
+	//printf("offset is %d\n", (tx + ty * LX));
+	
+	int jn = (ty>0)?(ty-1):(LY-1);
+	
+	int jp = (ty<LY-1)?(ty+1):(0);
+	
+	int in = (tx>0)?(tx-1):(LX-1); 
+	int ip = (tx<LX-1)?(tx+1):(0);
+	
+	
+			
+		df[(tx + ty*LX)*9 + 0] = dftemp[(tx + ty*LX)*9 + 0]; 
+		df[(ip + ty*LX)*9 + 1] = dftemp[(tx + ty*LX)*9 + 1]; 
+		df[(tx + jp*LX)*9 + 2] = dftemp[(tx + ty*LX)*9 + 2];
+		df[(in + ty*LX)*9 + 3] = dftemp[(tx + ty*LX)*9 + 3];
+		df[(tx + jn*LX)*9 + 4] = dftemp[(tx + ty*LX)*9 + 4];
+		df[(ip + jp*LX)*9 + 5] = dftemp[(tx + ty*LX)*9 + 5];
+		df[(in + jp*LX)*9 + 6] = dftemp[(tx + ty*LX)*9 + 6];
+		df[(in + jn*LX)*9 + 7] = dftemp[(tx + ty*LX)*9 + 7];
+		df[(ip + jn*LX)*9 + 8] = dftemp[(tx + ty*LX)*9 + 8]; 
+
+
+	
+	//__syncthreads();
+		//printf("count is %d\n",count);
+}

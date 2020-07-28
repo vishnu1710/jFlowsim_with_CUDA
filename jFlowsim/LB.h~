@@ -1,0 +1,21 @@
+#ifndef _LB_H_
+#define _LB_H_
+
+#define BOUNDARY -2
+#define SOLID  -1
+#define INTERFACE 1
+#define FLUID  2
+#define INFLOWH 3
+#define RUNUP 4
+#define GAS 5
+#define SOLIDN 6
+#define SOLIDS 7
+#define SOLIDE 8
+#define SOLIDW 9
+#define VELO 10
+#define PRESS 11
+
+
+#define NUM_THREADS 32
+
+#endif
